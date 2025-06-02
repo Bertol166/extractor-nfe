@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Extrator NFe</title>
+    <meta charset="UTF-8">
+    <style>
+        body { font-family: Arial; padding: 20px; background: #f5f5f5; }
+        .container { max-width: 1000px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; }
+        .header { text-align: center; color: #333; margin-bottom: 30px; }
+        .upload { border: 2px dashed #ddd; padding: 20px; text-align: center; margin: 20px 0; }
+        .btn { padding: 10px 15px; margin: 5px; border: none; border-radius: 4px; cursor: pointer; }
+        .btn-blue { background: #007bff; color: white; }
+        .btn-green { background: #28a745; color: white; }
+        .btn-gray { background: #6c757d; color: white; }
+        .btn:disabled { background: #ccc; }
+        .status { padding: 10px; margin: 10px 0; border-radius: 4px; }
+        .info { background: #d1ecf1; color: #0c5460; }
+        .success { background: #d4edda; color: #155724; }
+        .error { background: #f8d7da; color: #721c24; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; font-size: 14px; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        th { background: #007bff; color: white; font-weight: bold; }
+        .hide { display: none; }
+        .valor-col { text-align: right; }
+        .destaque { background: #fff3cd; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🧾 Extrator de Produtos NFe</h1>
+            <p>Selecione um arquivo XML de Nota Fiscal</p>
+        </div>
+    &lt;div class="upload"&gt;
+        &lt;input type="file" id="arquivo" accept=".xml" style="display: none;"&gt;
+        &lt;button class="btn btn-blue" onclick="selecionarArquivo()"&gt;📁 Escolher Arquivo XML&lt;/button&gt;
+        &lt;div id="info-arquivo" style="margin-top: 10px; color: green;"&gt;&lt;/div&gt;
+    &lt;/div&gt;
+
+    &lt;div&gt;
+        &lt;button class="btn btn-green" id="processar" onclick="processar()" disabled&gt;🔄 Processar&lt;/button&gt;
+        &lt;button class="btn btn-blue" id="exportar" onclick="exportar()" disabled&gt;💾 Exportar CSV&lt;/button&gt;
+        &lt;button class="btn btn-gray" onclick="limpar()"&gt;🗑️ Limpar&lt;/button&gt;
+    &lt;/div&gt;
+
+    &lt;div id="status" class="status info"&gt;Aguardando arquivo XML...&lt;/div&gt;
+
+    &lt;div id="resultados" class="hide"&gt;
+        &lt;h3&gt;📊 Produtos encontrados: &lt;span id="total"&gt;0&lt;/span&gt;&lt;/h3&gt;
+        &lt;div style="overflow-x: auto;"&gt;
+            &lt;table&gt;
+                &lt;tr&gt;
+                    &lt;th&gt;Código&lt;/th&gt;
+                    &lt;th&gt;Descrição do Produto&lt;/th&gt;
+                    &lt;th&gt;Quantidade&lt;/th&gt;
+                    &lt;th&gt;Valor Unitário COM Impostos sobre UMA Unidade&lt;/th&gt;
+                    &lt;th&gt;Valor Total COM Impostos&lt;/th&gt;
+                &lt;/tr&gt;
+                &lt;tbody id="tabela"&gt;&lt;/tbody&gt;
+            &lt;/table&gt;
+        &lt;/div&gt;
+
+        &lt;div style="margin-top: 20px; padding: 15px; background: #e8f4fd; border-radius: 5px;"&gt;
+            &lt;h4&gt;💡 Explicação dos Cálculos:&lt;/h4&gt;
+            &lt;p&gt;&lt;strong&gt;Valor Unitário COM Impostos:&lt;/strong&gt; Valor base da unidade + (Total de impostos do item ÷ Quantidade)&lt;/p&gt;
+            &lt;p&gt;&lt;strong&gt;Valor Total COM Impostos:&lt;/strong&gt; Valor total do produto + Todos os impostos (ICMS, IPI, PIS, COFINS)&lt;/p&gt;
+        &lt;/div&gt;
+    &lt;/div&gt;
+&lt;/div&gt;
+
+&lt;script&gt;
+    let produtos = [];
+    let arquivo = null;
+
+    function selecionarArquivo() {
+        document.getElementById('arquivo').click();
+    }
+
+    document.getElementById('arquivo').onchange = function(e) {
+        arquivo = e.target.files[0];
+        if (arquivo) {
+            document.getElementById('info-arquivo').textContent = '✅ ' + arquivo.name;
+            document.getElementById('processar').disabled = false;
+            mostrarStatus('Arquivo selecionado! Clique em Processar', 'info');
+        }
+    };
+
+    function processar() {
+        if (!arquivo) return;
+
+        mostrarStatus('🔄 Processando arquivo...', 'info');
+
+        const leitor = new FileReader();
+        leitor.onload = function(e) {
+            try {
+                const xml = e.target.result;
+                const parser = new DOMParser();
+                const doc = parser.parseFromString(xml, 'text/xml');
+
+                produtos = [];
+                const itens = doc.querySelectorAll('det');
+
+                itens.forEach(function(item) {
+                    const prod = item.querySelector('prod');
+                    if (prod) {
+                        const codigo = obterTexto(prod, 'cProd');
+                        const descricao = obterTexto(prod, 'xProd');
+                        const quantidade = parseFloat(obterTexto(prod, 'qCom') || '0');
+                        const valorUnitarioBase = parseFloat(obterTexto(prod, 'vUnCom') || '0');
+                        const valorTotalBase = parseFloat(obterTexto(prod, 'vProd') || '0');
+
+                        // CALCULAR TODOS OS IMPOSTOS DO ITEM
+                        let totalImpostosItem = 0;
+                        const imposto = item.querySelector('imposto');
+                        if (imposto) {
+                            // ICMS
+                            const icms = imposto.querySelector('vICMS');
+                            if (icms) totalImpostosItem += parseFloat(icms.textContent || '0');
+
+                            // IPI
+                            const ipi = imposto.querySelector('vIPI');
+                            if (ipi) totalImpostosItem += parseFloat(ipi.textContent || '0');
+
+                            // PIS
+                            const pis = imposto.querySelector('vPIS');
+                            if (pis) totalImpostosItem += parseFloat(pis.textContent || '0');
+
+                            // COFINS
+                            const cofins = imposto.querySelector('vCOFINS');
+                            if (cofins) totalImpostosItem += parseFloat(cofins.textContent || '0');
+                        }
+
+                        // CALCULAR IMPOSTO POR UNIDADE
+                        const impostoPorUnidade = quantidade &gt; 0 ? totalImpostosItem / quantidade : 0;
+
+                        // VALOR UNITÁRIO REAL (base + impostos de uma unidade)
+                        const valorUnitarioComImpostos = valorUnitarioBase + impostoPorUnidade;
+
+                        // VALOR TOTAL REAL (base + todos os impostos)
+                        const valorTotalComImpostos = valorTotalBase + totalImpostosItem;
+
+                        const produto = {
+                            codigo: codigo || 'N/A',
+                            descricao: descricao || 'N/A',
+                            quantidade: quantidade,
+                            valorUnitarioComImpostos: valorUnitarioComImpostos,
+                            valorTotalComImpostos: valorTotalComImpostos,
+                            // Para debug (opcional)
+                            valorUnitarioBase: valorUnitarioBase,
+                            totalImpostosItem: totalImpostosItem,
+                            impostoPorUnidade: impostoPorUnidade
+                        };
+
+                        produtos.push(produto);
+                    }
+                });
+
+                if (produtos.length &gt; 0) {
+                    mostrarResultados();
+                    mostrarStatus('✅ ' + produtos.length + ' produtos extraídos!', 'success');
+                } else {
+                    mostrarStatus('❌ Nenhum produto encontrado', 'error');
+                }
+
+            } catch (erro) {
+                mostrarStatus('❌ Erro: ' + erro.message, 'error');
+                console.error('Detalhes do erro:', erro);
+            }
+        };
+
+        leitor.readAsText(arquivo);
+    }
+
+    function obterTexto(parent, tag) {
+        const el = parent.querySelector(tag);
+        return el ? el.textContent : '';
+    }
+
+    function mostrarResultados() {
+        const tabela = document.getElementById('tabela');
+        tabela.innerHTML = '';
+
+        produtos.forEach(function(p) {
+            const linha = tabela.insertRow();
+            linha.innerHTML = 
+                '&lt;td&gt;' + p.codigo + '&lt;/td&gt;' +
+                '&lt;td&gt;' + p.descricao + '&lt;/td&gt;' +
+                '&lt;td class="valor-col"&gt;' + p.quantidade.toFixed(2) + '&lt;/td&gt;' +
+                '&lt;td class="valor-col destaque"&gt;R$ ' + p.valorUnitarioComImpostos.toFixed(2) + '&lt;/td&gt;' +
+                '&lt;td class="valor-col"&gt;R$ ' + p.valorTotalComImpostos.toFixed(2) + '&lt;/td&gt;';
+        });
+
+        document.getElementById('total').textContent = produtos.length;
+        document.getElementById('resultados').classList.remove('hide');
+        document.getElementById('exportar').disabled = false;
+    }
+
+    function exportar() {
+        let csv = 'Código,Descrição do Produto,Quantidade,Valor Unitário COM Impostos sobre UMA Unidade,Valor Total COM Impostos\n';
+
+        produtos.forEach(function(p) {
+            csv += '"' + p.codigo + '","' + p.descricao + '",' + 
+                   p.quantidade.toFixed(2) + ',' + 
+                   p.valorUnitarioComImpostos.toFixed(2) + ',' + 
+                   p.valorTotalComImpostos.toFixed(2) + '\n';
+        });
+
+        const blob = new Blob([csv], {type: 'text/csv'});
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'produtos_nfe_valor_real.csv';
+        a.click();
+        URL.revokeObjectURL(url);
+
+        mostrarStatus('✅ CSV com valores reais exportado!', 'success');
+    }
+
+    function limpar() {
+        produtos = [];
+        arquivo = null;
+        document.getElementById('arquivo').value = '';
+        document.getElementById('info-arquivo').textContent = '';
+        document.getElementById('tabela').innerHTML = '';
+        document.getElementById('resultados').classList.add('hide');
+        document.getElementById('processar').disabled = true;
+        document.getElementById('exportar').disabled = true;
+        mostrarStatus('Dados limpos', 'info');
+    }
+
+    function mostrarStatus(msg, tipo) {
+        const status = document.getElementById('status');
+        status.textContent = msg;
+        status.className = 'status ' + tipo;
+    }
+&lt;/script&gt;
+
+</body>
+</html>
